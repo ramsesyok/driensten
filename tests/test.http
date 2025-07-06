@@ -1,0 +1,8 @@
+# @keepStreaming
+MQTT  tcp://localhost:1883
+subscribe: topicA
+
+MQTT tcp://localhost:1883
+Topic: httpyac
+
+Hello, World

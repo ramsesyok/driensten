@@ -1,0 +1,15 @@
+HTTP:
+  listen: 127.0.0.1:8080
+  root: dist
+MQTT:
+  tcp: 127.0.0.1:1883
+  websocket: 127.0.0.1:9090
+UDP:
+  listen: 127.0.0.1:6565
+  forwards:
+    127.0.0.1:5653:
+      - topicA
+      - topicB
+    127.0.0.1:5656:
+      - topicC
+      - topicD

@@ -1,6 +1,7 @@
 // main.cpp
 #define _USE_MATH_DEFINES
 #include <cmath>
+#include <cstdlib>
 #include <thread>
 #include <chrono>
 #include <iostream>
@@ -27,17 +28,28 @@ void signalHandler(int signum)
         std::cout << "\n>> Interrupt received. Stopping loop...\n";
     }
 }
+void setupLogger()
+{
+    // 1MB・世代数3のローテート付きファイルシンク
+    auto rotating_sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
+        "log.ndjson",
+        1024 * 1024, // 1MB
+        3);          // 世代数 3
 
-// void generatePoint(int id, double radius, double height, double angle, plotmsg::PlotPoint *p)
-// {
-//     double x = radius * cos(angle);
-//     double y = radius * sin(angle);
-//     double z = height;
-//     p->setId(id);
-//     p->setX(x);
-//     p->setY(y);
-//     p->setZ(z);
-// }
+    // カラー付きコンソール出力シンク
+    auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
+
+    // メッセージ本文のみ出力（タイムスタンプやレベルは不要）
+    rotating_sink->set_pattern("%v");
+    console_sink->set_pattern("%v");
+
+    // --- ロガーの生成 & 登録 ---
+    std::vector<spdlog::sink_ptr> sinks{rotating_sink, console_sink};
+    auto logger = std::make_shared<spdlog::logger>(
+        "multi_sink", sinks.begin(), sinks.end());
+    spdlog::register_logger(logger);
+    spdlog::set_default_logger(logger);
+}
 
 int main()
 {
@@ -45,67 +57,47 @@ int main()
     {
         // シグナルハンドラを登録
         std::signal(SIGINT, signalHandler);
-#ifdef _WIN32
-        WSADATA wsa;
-        if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
+
+        // ロガーを設定
+        setupLogger();
+
+        // ソケットの初期化
+        if (!UdpHandler::startupSock())
         {
-            std::cerr << "WSAStartup failed\n";
-            return 1;
+            return EXIT_FAILURE;
         }
-#endif
-
+        // MQTT中継を初期化
         MqttBridge mqtt("127.0.0.1", 5653, "127.0.0.1", 6565);
-        // 1MB・世代数3のローテート付きファイルシンク
-        auto rotating_sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
-            "log.ndjson",
-            1024 * 1024, // 1MB
-            3);          // 世代数 3
-
-        // カラー付きコンソール出力シンク
-        auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
-
-        // メッセージ本文のみ出力（タイムスタンプやレベルは不要）
-        rotating_sink->set_pattern("%v");
-        console_sink->set_pattern("%v");
-
-        // --- ロガーの生成 & 登録 ---
-        std::vector<spdlog::sink_ptr> sinks{rotating_sink, console_sink};
-        auto logger = std::make_shared<spdlog::logger>(
-            "multi_sink", sinks.begin(), sinks.end());
-        spdlog::register_logger(logger);
-        spdlog::set_default_logger(logger);
-
-        // INFO レベル以上が出たら即フラッシュ
-        // logger->flush_on(spdlog::level::info);
-
-        const std::string topic = "realtime/3dpoints";
 
         bool isStarted = false;
-        nlohmann::json jsonPayload;
-        Simulation sim;
+
+        // シミュレーションを構築
+        Simulation simulation;
+
         while (!g_stop_flag.load())
         {
+            // メッセージ受信をトライ
             auto body = mqtt.subscribe();
-            if (body)
+            if (body) // 受信できていれば内容を取得
             {
                 auto topicMessage = body.value();
-                auto j = nlohmann::json::parse(topicMessage.second);
-                if (topicMessage.first == "realtime/command" && j.contains("command"))
+                auto subJson = nlohmann::json::parse(topicMessage.second);
+                if (topicMessage.first == "realtime/command" && subJson.contains("command"))
                 {
-                    if (j["command"] == "start")
+                    if (subJson["command"] == "start")
                     {
                         spdlog::info("START!!");
                         isStarted = true;
                     }
-                    else if (j["command"] == "stop")
+                    else if (subJson["command"] == "stop")
                     {
                         spdlog::info("STOP!!");
                         isStarted = false;
                     }
-                    else if (j["command"] == "reset")
+                    else if (subJson["command"] == "reset")
                     {
                         spdlog::info("RESET!!");
-                        sim.reset();
+                        simulation.reset();
                         isStarted = false;
                     }
                 }
@@ -115,24 +107,24 @@ int main()
                 continue;
             }
 
-            sim.update();
+            simulation.update();
 
-            plotmsg::to_json(jsonPayload, sim.getPoints());
-            mqtt.publish(topic, jsonPayload.dump());
+            nlohmann::json pubJson;
+            plotmsg::to_json(pubJson, simulation.getPoints());
+            mqtt.publish("realtime/3dpoints", pubJson.dump());
 
             // 1秒スリープ
             std::this_thread::sleep_for(std::chrono::seconds(1));
         }
-        logger->flush();
-#ifdef _WIN32
-        WSACleanup();
-#endif
+
+        spdlog::get("multi_sink")->flush();
+        UdpHandler::cleanupSock();
     }
     catch (const std::exception &ex)
     {
         std::cerr << "Error: " << ex.what() << "\n";
-        return 1;
+        return EXIT_FAILURE;
     }
 
-    return 0;
+    return EXIT_SUCCESS;
 }

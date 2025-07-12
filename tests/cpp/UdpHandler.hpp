@@ -141,6 +141,25 @@ public:
             std::cerr << "sendto() failed: " << GET_ERROR() << "\n";
         }
     }
+    static bool startupSock()
+    {
+#ifdef _WIN32
+
+        WSADATA wsa;
+        if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
+        {
+            std::cerr << "WSAStartup failed\n";
+            return false;
+        }
+#endif
+        return true;
+    }
+    static void cleanupSock()
+    {
+#ifdef _WIN32
+        WSACleanup();
+#endif
+    };
 
 private:
     socket_t recvSock_{INVALID_SOCK};

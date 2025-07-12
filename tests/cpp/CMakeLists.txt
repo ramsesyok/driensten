@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 
 add_executable(udpcpp main.cpp UdpHandler.hpp Geodetic.cpp Simulation.cpp)
 
-target_include_directories(udpcpp PRIVATE 3rdparty/include)
+target_include_directories(udpcpp PRIVATE include 3rdparty/include)
 
 if (WIN32)
 target_compile_definitions(udpcpp PRIVATE _WIN32)

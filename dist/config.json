@@ -1,0 +1,26 @@
+{
+    "mqtt": {
+        "brokerUrl": "ws://localhost:9090",
+        "topic": "realtime/3dpoints"
+    },
+    "initialRange": {
+        "x": [
+            -100,
+            100
+        ],
+        "y": [
+            -100,
+            100
+        ],
+        "z": [
+            -100,
+            100
+        ]
+    },
+    "marker": {
+        "size": 1
+    },
+    "plot": {
+        "width": 1200
+    }
+}

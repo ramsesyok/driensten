@@ -2,6 +2,7 @@
 #define UDP_HANDLER_HPP_
 
 #include <iostream>
+#include <optional>
 #include <string>
 #include <cstring>
 #ifdef _WIN32
@@ -90,7 +91,7 @@ public:
 
     // データ受信。受信できたら true を返す
     // timeoutMs: 待ち時間（ミリ秒）。デフォルトは100ms
-    bool receive(int timeoutMs = 100)
+    std::optional<std::string> receive(int timeoutMs = 100)
     {
         fd_set readfds;
         FD_ZERO(&readfds);
@@ -101,12 +102,12 @@ public:
         tv.tv_sec = timeoutMs / 1000;
         tv.tv_usec = (timeoutMs % 1000) * 1000;
 
-        int nfds = recvSock_ + 1;
+        int nfds = static_cast<int>(recvSock_ + 1);
         int sel = select(nfds, &readfds, nullptr, nullptr, &tv);
         if (sel == SOCK_ERR)
         {
             std::cerr << "select() failed: " << GET_ERROR() << "\n";
-            return false;
+            return std::nullopt;
         }
         if (sel > 0 && FD_ISSET(recvSock_, &readfds))
         {
@@ -115,15 +116,14 @@ public:
             if (len > 0)
             {
                 buf[len] = '\0';
-                std::cout << "[RECV] " << buf << "\n";
-                return true;
+                return std::string(buf, len);
             }
             else
             {
                 std::cerr << "recvfrom() failed: " << GET_ERROR() << "\n";
             }
         }
-        return false;
+        return std::nullopt;
     }
 
     // メッセージを送信

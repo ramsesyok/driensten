@@ -8,7 +8,7 @@ UDP:
   listen: 127.0.0.1:6565
   forwards:
     127.0.0.1:5653:
-      - topicA
+      - realtime/command
       - topicB
     127.0.0.1:5656:
       - topicC

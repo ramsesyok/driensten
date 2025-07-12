@@ -62,14 +62,14 @@ int main()
         setupLogger();
 
         // ソケットの初期化
-        if (!UdpHandler::startupSock())
+        if (!MqttBridge::startupSock())
         {
             return EXIT_FAILURE;
         }
         // MQTT中継を初期化
         MqttBridge mqtt("127.0.0.1", 5653, "127.0.0.1", 6565);
 
-        bool isStarted = false;
+        bool isRunning = false;
 
         // シミュレーションを構築
         Simulation simulation;
@@ -78,8 +78,8 @@ int main()
         {
             // メッセージ受信をトライ
             auto body = mqtt.subscribe();
-            if (body) // 受信できていれば内容を取得
-            {
+            if (body)
+            { // 受信できていれば内容を取得
                 auto topicMessage = body.value();
                 auto subJson = nlohmann::json::parse(topicMessage.second);
                 if (topicMessage.first == "realtime/command" && subJson.contains("command"))
@@ -87,22 +87,22 @@ int main()
                     if (subJson["command"] == "start")
                     {
                         spdlog::info("START!!");
-                        isStarted = true;
+                        isRunning = true;
                     }
                     else if (subJson["command"] == "stop")
                     {
                         spdlog::info("STOP!!");
-                        isStarted = false;
+                        isRunning = false;
                     }
                     else if (subJson["command"] == "reset")
                     {
                         spdlog::info("RESET!!");
                         simulation.reset();
-                        isStarted = false;
+                        isRunning = false;
                     }
                 }
             }
-            if (!isStarted)
+            if (!isRunning)
             {
                 continue;
             }
@@ -110,7 +110,7 @@ int main()
             simulation.update();
 
             nlohmann::json pubJson;
-            plotmsg::to_json(pubJson, simulation.getPoints());
+            plotmsg::to_json(pubJson, simulation.getPlotPoints());
             mqtt.publish("realtime/3dpoints", pubJson.dump());
 
             // 1秒スリープ
@@ -118,7 +118,7 @@ int main()
         }
 
         spdlog::get("multi_sink")->flush();
-        UdpHandler::cleanupSock();
+        MqttBridge::cleanupSock();
     }
     catch (const std::exception &ex)
     {

@@ -15,24 +15,24 @@ public:
     void update();
     void reset();
 
-    const plotmsg::PlotPoints &getPoints();
+    const plotmsg::PlotPoints &getPlotPoints();
 
     const double &getTimestamp()
     {
-        return timestamp;
+        return m_timestamp;
     }
 
 private:
-    void generatePoint(int id, double radius, double height, double angle, std::unique_ptr<plotmsg::PlotPoint> &p);
+    void updatePlotPoint(int id, double radius, double height, double angle, std::unique_ptr<plotmsg::PlotPoint> &p);
 
 private:
-    double timestamp;
-    long count;
-    int period;
+    double m_timestamp;
+    long m_count;
+    int m_period;
 
-    std::unique_ptr<plotmsg::PlotPoints> plotPoints;
-    std::unique_ptr<plotmsg::PlotPoint> p1;
-    std::unique_ptr<plotmsg::PlotPoint> p2;
+    std::unique_ptr<plotmsg::PlotPoints> m_plotPoints;
+    std::unique_ptr<plotmsg::PlotPoint> m_point1;
+    std::unique_ptr<plotmsg::PlotPoint> m_point2;
 };
 
 #endif // SIMULATION_HPP_

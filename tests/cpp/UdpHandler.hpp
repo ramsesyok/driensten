@@ -35,58 +35,58 @@ public:
                const std::string &sendIp, uint16_t sendPort)
     {
         // 受信ソケット初期化
-        recvSock_ = socket(AF_INET, SOCK_DGRAM, 0);
-        if (recvSock_ == INVALID_SOCK)
+        m_recvSock = socket(AF_INET, SOCK_DGRAM, 0);
+        if (m_recvSock == INVALID_SOCK)
         {
             throw std::runtime_error("recv socket() failed: " + std::to_string(GET_ERROR()));
         }
-        std::memset(&recvAddr_, 0, sizeof(recvAddr_));
-        recvAddr_.sin_family = AF_INET;
+        std::memset(&m_recvAddr, 0, sizeof(m_recvAddr));
+        m_recvAddr.sin_family = AF_INET;
 #ifdef _WIN32
-        if (InetPton(AF_INET, recvIp.c_str(), &recvAddr_.sin_addr) != 1)
+        if (InetPton(AF_INET, recvIp.c_str(), &m_recvAddr.sin_addr) != 1)
         {
             throw std::runtime_error("InetPton(recv) failed: " + std::to_string(GET_ERROR()));
         }
 #else
-        if (inet_pton(AF_INET, recvIp.c_str(), &recvAddr_.sin_addr) != 1)
+        if (inet_pton(AF_INET, recvIp.c_str(), &m_recvAddr.sin_addr) != 1)
         {
             throw std::runtime_error("inet_pton(recv) failed: " + std::to_string(GET_ERROR()));
         }
 #endif
-        recvAddr_.sin_port = htons(recvPort);
-        if (bind(recvSock_, (sockaddr *)&recvAddr_, sizeof(recvAddr_)) == SOCK_ERR)
+        m_recvAddr.sin_port = htons(recvPort);
+        if (bind(m_recvSock, (sockaddr *)&m_recvAddr, sizeof(m_recvAddr)) == SOCK_ERR)
         {
-            CLOSE_SOCKET(recvSock_);
+            CLOSE_SOCKET(m_recvSock);
             throw std::runtime_error("bind() failed: " + std::to_string(GET_ERROR()));
         }
 
         // 送信ソケット初期化
-        sendSock_ = socket(AF_INET, SOCK_DGRAM, 0);
-        if (sendSock_ == INVALID_SOCK)
+        m_sendSock = socket(AF_INET, SOCK_DGRAM, 0);
+        if (m_sendSock == INVALID_SOCK)
         {
-            CLOSE_SOCKET(recvSock_);
+            CLOSE_SOCKET(m_recvSock);
             throw std::runtime_error("send socket() failed: " + std::to_string(GET_ERROR()));
         }
-        std::memset(&sendAddr_, 0, sizeof(sendAddr_));
-        sendAddr_.sin_family = AF_INET;
+        std::memset(&m_sendAddr, 0, sizeof(m_sendAddr));
+        m_sendAddr.sin_family = AF_INET;
 #ifdef _WIN32
-        if (InetPton(AF_INET, sendIp.c_str(), &sendAddr_.sin_addr) != 1)
+        if (InetPton(AF_INET, sendIp.c_str(), &m_sendAddr.sin_addr) != 1)
         {
             throw std::runtime_error("InetPton(send) failed: " + std::to_string(GET_ERROR()));
         }
 #else
-        if (inet_pton(AF_INET, sendIp.c_str(), &sendAddr_.sin_addr) != 1)
+        if (inet_pton(AF_INET, sendIp.c_str(), &m_sendAddr.sin_addr) != 1)
         {
             throw std::runtime_error("inet_pton(send) failed: " + std::to_string(GET_ERROR()));
         }
 #endif
-        sendAddr_.sin_port = htons(sendPort);
+        m_sendAddr.sin_port = htons(sendPort);
     }
 
     ~UdpHandler()
     {
-        CLOSE_SOCKET(recvSock_);
-        CLOSE_SOCKET(sendSock_);
+        CLOSE_SOCKET(m_recvSock);
+        CLOSE_SOCKET(m_sendSock);
     }
 
     // データ受信。受信できたら true を返す
@@ -95,24 +95,24 @@ public:
     {
         fd_set readfds;
         FD_ZERO(&readfds);
-        FD_SET(recvSock_, &readfds);
+        FD_SET(m_recvSock, &readfds);
 
         // timeoutMs を秒／マイクロ秒に分割
         timeval tv;
         tv.tv_sec = timeoutMs / 1000;
         tv.tv_usec = (timeoutMs % 1000) * 1000;
 
-        int nfds = static_cast<int>(recvSock_ + 1);
+        int nfds = static_cast<int>(m_recvSock + 1);
         int sel = select(nfds, &readfds, nullptr, nullptr, &tv);
         if (sel == SOCK_ERR)
         {
             std::cerr << "select() failed: " << GET_ERROR() << "\n";
             return std::nullopt;
         }
-        if (sel > 0 && FD_ISSET(recvSock_, &readfds))
+        if (sel > 0 && FD_ISSET(m_recvSock, &readfds))
         {
             char buf[1024];
-            int len = recvfrom(recvSock_, buf, sizeof(buf) - 1, 0, nullptr, nullptr);
+            int len = recvfrom(m_recvSock, buf, sizeof(buf) - 1, 0, nullptr, nullptr);
             if (len > 0)
             {
                 buf[len] = '\0';
@@ -130,12 +130,12 @@ public:
     void send(const std::string &msg)
     {
         int sent = sendto(
-            sendSock_,
+            m_sendSock,
             msg.c_str(),
             static_cast<int>(msg.size()),
             0,
-            reinterpret_cast<const sockaddr *>(&sendAddr_),
-            sizeof(sendAddr_));
+            reinterpret_cast<const sockaddr *>(&m_sendAddr),
+            sizeof(m_sendAddr));
         if (sent == SOCK_ERR)
         {
             std::cerr << "sendto() failed: " << GET_ERROR() << "\n";
@@ -162,9 +162,9 @@ public:
     };
 
 private:
-    socket_t recvSock_{INVALID_SOCK};
-    socket_t sendSock_{INVALID_SOCK};
-    sockaddr_in recvAddr_{};
-    sockaddr_in sendAddr_{};
+    socket_t m_recvSock{INVALID_SOCK};
+    socket_t m_sendSock{INVALID_SOCK};
+    sockaddr_in m_recvAddr{};
+    sockaddr_in m_sendAddr{};
 };
 #endif // UdpHandler_hpp

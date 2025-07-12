@@ -3,33 +3,33 @@
 #include "simulation.hpp"
 #include "PlotPoints.hpp"
 Simulation::Simulation()
-    : count(0), timestamp(0.0), period(60), plotPoints(new plotmsg::PlotPoints()), p1(new plotmsg::PlotPoint()), p2(new plotmsg::PlotPoint())
+    : m_count(0), m_timestamp(0.0), m_period(60), m_plotPoints(new plotmsg::PlotPoints()), m_point1(new plotmsg::PlotPoint()), m_point2(new plotmsg::PlotPoint())
 {
 }
 
 void Simulation::reset()
 {
-    count = 0;
-    timestamp = 0.0;
+    m_count = 0;
+    m_timestamp = 0.0;
 }
 
 void Simulation::update()
 {
-    plotPoints->setTimestamp(timestamp);
-    const double angle = 2 * M_PI * (count % period) / period;
-    generatePoint(101, 100, 50, angle, p1);
-    generatePoint(102, 300, 20, angle, p2);
-    plotPoints->setPoints({*p1, *p2});
+    m_plotPoints->setTimestamp(m_timestamp);
+    const double angle = 2 * M_PI * (m_count % m_period) / m_period;
+    updatePlotPoint(101, 100, 50, angle, m_point1);
+    updatePlotPoint(102, 300, 20, angle, m_point2);
+    m_plotPoints->setPoints({*m_point1, *m_point2});
 
-    timestamp += 0.5;
-    count++;
+    m_timestamp += 0.5;
+    m_count++;
 }
-const plotmsg::PlotPoints &Simulation::getPoints()
+const plotmsg::PlotPoints &Simulation::getPlotPoints()
 {
-    return *plotPoints.get();
+    return *m_plotPoints.get();
 }
 
-void Simulation::generatePoint(int id, double radius, double height, double angle, std::unique_ptr<plotmsg::PlotPoint> &p)
+void Simulation::updatePlotPoint(int id, double radius, double height, double angle, std::unique_ptr<plotmsg::PlotPoint> &p)
 {
     double x = radius * cos(angle);
     double y = radius * sin(angle);

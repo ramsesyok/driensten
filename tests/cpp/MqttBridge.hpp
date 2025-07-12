@@ -2,11 +2,11 @@
 #define MQTT_HANDLER_HPP_
 #include "UdpHandler.hpp"
 
-class MqttHandler : public UdpHandler
+class MqttBridge : public UdpHandler
 {
 public:
-    MqttHandler(const std::string &recvIp, uint16_t recvPort,
-                const std::string &sendIp, uint16_t sendPort)
+    MqttBridge(const std::string &recvIp, uint16_t recvPort,
+               const std::string &sendIp, uint16_t sendPort)
         : UdpHandler(recvIp, recvPort, sendIp, sendPort)
     {
     }

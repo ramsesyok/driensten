@@ -9,8 +9,7 @@
 #include <cstring>
 #include <csignal>
 #include <vector>
-// #include "UdpHandler.hpp"
-#include "MqttHandler.hpp"
+#include "MqttBridge.hpp"
 #include "PlotPoints.hpp"
 #include "spdlog/spdlog.h"
 #include "spdlog/sinks/rotating_file_sink.h"
@@ -54,7 +53,7 @@ int main()
         }
 #endif
 
-        MqttHandler mqtt("127.0.0.1", 5653, "127.0.0.1", 6565);
+        MqttBridge mqtt("127.0.0.1", 5653, "127.0.0.1", 6565);
         // 1MB・世代数3のローテート付きファイルシンク
         auto rotating_sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
             "log.ndjson",

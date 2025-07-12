@@ -49,6 +49,7 @@ func Execute() {
 
 func init() {
 	cobra.OnInitialize(initConfig)
+	cobra.MousetrapHelpText = ""
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (デフォルトは、実行ファイル直下の driensten.yaml)")
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)

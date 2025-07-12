@@ -1,3 +1,13 @@
+/**
+ * @file UdpHandler.hpp
+ * @brief UDP通信クラスのための定義ファイル
+ * @details 処理の可搬性を重視するため、ヘッダ内のみに処理をまとめている
+ * @version 0.1
+ * @date 2025-07-13
+ *
+ * @copyright Copyright (c) 2025
+ *
+ */
 #ifndef UDP_HANDLER_HPP_
 #define UDP_HANDLER_HPP_
 
@@ -28,9 +38,21 @@ using socket_t = int;
 #define SOCK_ERR (-1)
 #endif
 
+/**
+ * @brief UDP通信を行うための基本処理を提供するクラス
+ *
+ */
 class UdpHandler
 {
 public:
+    /**
+     * @brief 新しいUDP処理オブジェクトを構成します
+     *
+     * @param recvIp 受信用IPアドレス
+     * @param recvPort 受信用ポート番号
+     * @param sendIp 送信用IPアドレス
+     * @param sendPort 送信用ポート
+     */
     UdpHandler(const std::string &recvIp, uint16_t recvPort,
                const std::string &sendIp, uint16_t sendPort)
     {
@@ -83,14 +105,22 @@ public:
         m_sendAddr.sin_port = htons(sendPort);
     }
 
+    /**
+     * @brief UDP処理オブジェクトを破棄します
+     *
+     */
     ~UdpHandler()
     {
         CLOSE_SOCKET(m_recvSock);
         CLOSE_SOCKET(m_sendSock);
     }
 
-    // データ受信。受信できたら true を返す
-    // timeoutMs: 待ち時間（ミリ秒）。デフォルトは100ms
+    /**
+     * @brief データ受信処理
+     * @details UDPデータを受信した場合は、受信したデータを返す。もし受信していない場合は、std::nulloptを返す
+     * @param timeoutMs タイムアウト時間[msec]
+     * @return std::optional<std::string>
+     */
     std::optional<std::string> receive(int timeoutMs = 100)
     {
         fd_set readfds;
@@ -126,7 +156,11 @@ public:
         return std::nullopt;
     }
 
-    // メッセージを送信
+    /**
+     * @brief メッセージを送信
+     *
+     * @param msg
+     */
     void send(const std::string &msg)
     {
         int sent = sendto(

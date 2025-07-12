@@ -35,18 +35,20 @@ void setupLogger()
         "log.ndjson",
         1024 * 1024, // 1MB
         3);          // 世代数 3
+    // メッセージ本文のみ出力（タイムスタンプやレベルは不要）
+    rotating_sink->set_pattern("%v");
+    rotating_sink->set_level(spdlog::level::trace);
 
     // カラー付きコンソール出力シンク
     auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
-
-    // メッセージ本文のみ出力（タイムスタンプやレベルは不要）
-    rotating_sink->set_pattern("%v");
-    console_sink->set_pattern("%v");
+    console_sink->set_level(spdlog::level::debug);
+    console_sink->set_pattern("[%l] %H:%M:%S | %v");
 
     // --- ロガーの生成 & 登録 ---
     std::vector<spdlog::sink_ptr> sinks{rotating_sink, console_sink};
     auto logger = std::make_shared<spdlog::logger>(
         "multi_sink", sinks.begin(), sinks.end());
+    logger->set_level(spdlog::level::trace);
     spdlog::register_logger(logger);
     spdlog::set_default_logger(logger);
 }
@@ -61,6 +63,7 @@ int main()
         // ロガーを設定
         setupLogger();
 
+        spdlog::info("Ready");
         // ソケットの初期化
         if (!MqttBridge::startupSock())
         {
@@ -111,7 +114,11 @@ int main()
 
             nlohmann::json pubJson;
             plotmsg::to_json(pubJson, simulation.getPlotPoints());
-            mqtt.publish("realtime/3dpoints", pubJson.dump());
+            std::string payload = pubJson.dump();
+            mqtt.publish("realtime/3dpoints", payload);
+
+            // ペイロードをログに出力
+            spdlog::trace(payload);
 
             // 1秒スリープ
             std::this_thread::sleep_for(std::chrono::seconds(1));

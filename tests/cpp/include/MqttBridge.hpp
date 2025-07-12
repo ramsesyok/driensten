@@ -28,7 +28,6 @@ public:
     }
     void publish(const std::string &topic, const std::string &payload)
     {
-        spdlog::info(payload);
         std::string msg = topic + "\n" + payload;
         this->send(msg);
     }

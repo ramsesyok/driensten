@@ -11,6 +11,7 @@
 #include <vector>
 #include "MqttBridge.hpp"
 #include "PlotPoints.hpp"
+#include "Simulation.hpp"
 #include "spdlog/spdlog.h"
 #include "spdlog/sinks/rotating_file_sink.h"
 #include "spdlog/sinks/stdout_color_sinks.h"
@@ -27,16 +28,16 @@ void signalHandler(int signum)
     }
 }
 
-void generatePoint(int id, double radius, double height, double angle, plotmsg::PlotPoint *p)
-{
-    double x = radius * cos(angle);
-    double y = radius * sin(angle);
-    double z = height;
-    p->setId(id);
-    p->setX(x);
-    p->setY(y);
-    p->setZ(z);
-}
+// void generatePoint(int id, double radius, double height, double angle, plotmsg::PlotPoint *p)
+// {
+//     double x = radius * cos(angle);
+//     double y = radius * sin(angle);
+//     double z = height;
+//     p->setId(id);
+//     p->setX(x);
+//     p->setY(y);
+//     p->setZ(z);
+// }
 
 int main()
 {
@@ -78,63 +79,48 @@ int main()
         // logger->flush_on(spdlog::level::info);
 
         const std::string topic = "realtime/3dpoints";
-        plotmsg::PlotPoints plotPoints;
-        plotmsg::PlotPoint p1;
-        plotmsg::PlotPoint p2;
 
-        double timestamp = 0.0;
-        double angle = 0.0;
-        int period = 60;
-        long count = 0;
         bool isStarted = false;
+        nlohmann::json jsonPayload;
+        Simulation sim;
         while (!g_stop_flag.load())
         {
-            auto rcv = mqtt.subscribe();
-            if (rcv)
+            auto body = mqtt.subscribe();
+            if (body)
             {
-                auto msg = rcv.value();
-                auto j = nlohmann::json::parse(msg.second);
-                if (msg.first == "realtime/command" && j.contains("command"))
+                auto topicMessage = body.value();
+                auto j = nlohmann::json::parse(topicMessage.second);
+                if (topicMessage.first == "realtime/command" && j.contains("command"))
                 {
                     if (j["command"] == "start")
                     {
-                        std::cout << "START!!" << std::endl;
+                        spdlog::info("START!!");
                         isStarted = true;
                     }
                     else if (j["command"] == "stop")
                     {
-                        std::cout << "STOP!!" << std::endl;
+                        spdlog::info("STOP!!");
                         isStarted = false;
                     }
                     else if (j["command"] == "reset")
                     {
-                        std::cout << "RESET!!" << std::endl;
-                        timestamp = 0.0;
-                        count = 0;
+                        spdlog::info("RESET!!");
+                        sim.reset();
                         isStarted = false;
                     }
                 }
-                //  受信時の追加処理があればここに
             }
             if (!isStarted)
             {
                 continue;
             }
 
-            angle = 2 * M_PI * (count % period) / period;
-            plotPoints.setTimestamp(timestamp);
-            generatePoint(101, 100, 50, angle, &p1);
-            generatePoint(102, 300, 20, angle, &p2);
-            plotPoints.setPoints(std::vector<plotmsg::PlotPoint>{p1, p2});
+            sim.update();
 
-            nlohmann::json j;
-            plotmsg::to_json(j, plotPoints);
+            plotmsg::to_json(jsonPayload, sim.getPoints());
+            mqtt.publish(topic, jsonPayload.dump());
 
-            std::string payload = j.dump();
-            mqtt.publish(topic, payload);
-            spdlog::info(payload);
-            timestamp += 0.5;
-            count++;
+            // 1秒スリープ
             std::this_thread::sleep_for(std::chrono::seconds(1));
         }
         logger->flush();

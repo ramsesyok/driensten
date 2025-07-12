@@ -1,6 +1,8 @@
 #ifndef MQTT_HANDLER_HPP_
 #define MQTT_HANDLER_HPP_
+#include "spdlog/spdlog.h"
 #include "UdpHandler.hpp"
+#include "PlotPoints.hpp"
 
 class MqttBridge : public UdpHandler
 {
@@ -26,6 +28,7 @@ public:
     }
     void publish(const std::string &topic, const std::string &payload)
     {
+        spdlog::info(payload);
         std::string msg = topic + "\n" + payload;
         this->send(msg);
     }

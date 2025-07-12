@@ -34,3 +34,4 @@ go.work.sum
 build
 out
 CMakePresets.json
+log.ndjson

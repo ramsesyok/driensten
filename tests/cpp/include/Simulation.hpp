@@ -25,6 +25,8 @@ class Simulation
 {
 public:
     Simulation::Simulation();
+    void start();
+    void stop();
     void update();
     void reset();
 
@@ -47,6 +49,7 @@ private:
     double m_timestamp;
     long m_count;
     int m_period;
+    bool m_isRunning;
 
     std::unique_ptr<plotmsg::PlotPoints> m_plotPoints;
     std::unique_ptr<plotmsg::PlotPoint> m_point1;

@@ -7,6 +7,7 @@
  */
 #define _USE_MATH_DEFINES
 #include <cmath>
+#include <spdlog/spdlog.h>
 #include "simulation.hpp"
 #include "PlotPoints.hpp"
 /**
@@ -14,8 +15,26 @@
  *
  */
 Simulation::Simulation()
-    : m_count(0), m_timestamp(0.0), m_period(60), m_plotPoints(new plotmsg::PlotPoints()), m_point1(new plotmsg::PlotPoint()), m_point2(new plotmsg::PlotPoint())
+    : m_count(0), m_timestamp(0.0), m_period(60), m_plotPoints(new plotmsg::PlotPoints()), m_point1(new plotmsg::PlotPoint()), m_point2(new plotmsg::PlotPoint()), m_isRunning(false)
 {
+}
+/**
+ * @brief シミュレーションを開始します
+ *
+ */
+void Simulation::start()
+{
+    spdlog::info("START!!");
+    m_isRunning = true;
+}
+/**
+ * @brief シミュレーションを停止します
+ *
+ */
+void Simulation::stop()
+{
+    spdlog::info("STOP!!");
+    m_isRunning = false;
 }
 /**
  * @brief シミュレーションの時間とカウンタをリセットします
@@ -23,6 +42,7 @@ Simulation::Simulation()
  */
 void Simulation::reset()
 {
+    m_isRunning = false;
     m_count = 0;
     m_timestamp = 0.0;
 }
@@ -32,6 +52,11 @@ void Simulation::reset()
  */
 void Simulation::update()
 {
+    if (!m_isRunning)
+    {
+        return;
+    }
+
     m_plotPoints->setTimestamp(m_timestamp);
 
     const double angle = 2 * M_PI * (m_count % m_period) / m_period;

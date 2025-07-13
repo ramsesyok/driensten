@@ -15,6 +15,7 @@
 #include <optional>
 #include <string>
 #include <cstring>
+#include "spdlog/spdlog.h"
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -136,7 +137,7 @@ public:
         int sel = select(nfds, &readfds, nullptr, nullptr, &tv);
         if (sel == SOCK_ERR)
         {
-            std::cerr << "select() failed: " << GET_ERROR() << "\n";
+            spdlog::error("select() failed: " + std::to_string(GET_ERROR()));
             return std::nullopt;
         }
         if (sel > 0 && FD_ISSET(m_recvSock, &readfds))
@@ -150,7 +151,7 @@ public:
             }
             else
             {
-                std::cerr << "recvfrom() failed: " << GET_ERROR() << "\n";
+                spdlog::warn("recvfrom() failed: " + std::to_string(GET_ERROR()));
             }
         }
         return std::nullopt;
@@ -172,7 +173,7 @@ public:
             sizeof(m_sendAddr));
         if (sent == SOCK_ERR)
         {
-            std::cerr << "sendto() failed: " << GET_ERROR() << "\n";
+            spdlog::warn("sendto() failed: " + std::to_string(GET_ERROR()));
         }
     }
     static bool startupSock()
@@ -182,7 +183,7 @@ public:
         WSADATA wsa;
         if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
         {
-            std::cerr << "WSAStartup failed\n";
+            spdlog::error("WSAStartup failed");
             return false;
         }
 #endif

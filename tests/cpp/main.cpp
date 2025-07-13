@@ -18,66 +18,55 @@
 #include "spdlog/sinks/stdout_color_sinks.h"
 
 // SIGINT（Ctrl+C）を受け取ったら true に切り替えるフラグ
-std::atomic<bool> g_stop_flag{false};
+std::atomic<bool> g_isStopped{false};
 // シグナルハンドラ
 void signalHandler(int signum)
 {
     if (signum == SIGINT)
     {
-        g_stop_flag.store(true);
-        std::cout << "\n>> Interrupt received. Stopping loop...\n";
+        g_isStopped.store(true);
+        spdlog::info(">> Interrupt received. Stopping loop...");
     }
 }
 void setupLogger()
 {
-    // 1MB・世代数3のローテート付きファイルシンク
-    auto rotating_sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
-        "log.ndjson",
-        1024 * 1024, // 1MB
-        3);          // 世代数 3
-    // メッセージ本文のみ出力（タイムスタンプやレベルは不要）
-    rotating_sink->set_pattern("%v");
-    rotating_sink->set_level(spdlog::level::trace);
+    // dump用に1MB・世代数3のローテート付きファイルロガー
+    auto dumpLogger = spdlog::rotating_logger_mt("dump", "log.ndjson", 1024 * 1024, 3);
+    // dump用はメッセージ本文のみ出力（タイムスタンプやレベルは不要）
+    dumpLogger->set_pattern("%v");
 
-    // カラー付きコンソール出力シンク
-    auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
-    console_sink->set_level(spdlog::level::debug);
-    console_sink->set_pattern("[%l] %H:%M:%S | %v");
+    // 通常のログは、カラー付きコンソール出力
+    auto console = spdlog::stdout_color_mt("console");
+    spdlog::set_default_logger(console);
 
-    // --- ロガーの生成 & 登録 ---
-    std::vector<spdlog::sink_ptr> sinks{rotating_sink, console_sink};
-    auto logger = std::make_shared<spdlog::logger>(
-        "multi_sink", sinks.begin(), sinks.end());
-    logger->set_level(spdlog::level::trace);
-    spdlog::register_logger(logger);
-    spdlog::set_default_logger(logger);
+    // 1秒に1回はログをフラッシュ
+    spdlog::flush_every(std::chrono::seconds(1));
 }
 
 int main()
 {
     try
     {
-        // シグナルハンドラを登録
-        std::signal(SIGINT, signalHandler);
-
         // ロガーを設定
         setupLogger();
 
-        spdlog::info("Ready");
+        // シグナルハンドラを登録
+        std::signal(SIGINT, signalHandler);
+
+        spdlog::info("Ready, wait for start command...");
         // ソケットの初期化
         if (!MqttBridge::startupSock())
         {
+            spdlog::error("MqttBridge initalize failure.");
             return EXIT_FAILURE;
         }
         // MQTT中継を初期化
         MqttBridge mqtt("127.0.0.1", 5653, "127.0.0.1", 6565);
 
-        bool isRunning = false;
-
         // シミュレーションを構築
         Simulation simulation;
 
-        while (!g_stop_flag.load())
+        while (!g_isStopped.load())
         {
             // メッセージ受信をトライ
             auto body = mqtt.subscribe();
@@ -89,27 +78,20 @@ int main()
                 {
                     if (subJson["command"] == "start")
                     {
-                        spdlog::info("START!!");
-                        isRunning = true;
+                        simulation.start();
                     }
                     else if (subJson["command"] == "stop")
                     {
-                        spdlog::info("STOP!!");
-                        isRunning = false;
+                        simulation.stop();
                     }
                     else if (subJson["command"] == "reset")
                     {
-                        spdlog::info("RESET!!");
                         simulation.reset();
-                        isRunning = false;
                     }
                 }
             }
-            if (!isRunning)
-            {
-                continue;
-            }
 
+            // シミュレーションを更新
             simulation.update();
 
             nlohmann::json pubJson;
@@ -117,19 +99,19 @@ int main()
             std::string payload = pubJson.dump();
             mqtt.publish("realtime/3dpoints", payload);
 
-            // ペイロードをログに出力
-            spdlog::trace(payload);
+            // ペイロードをdumpログに出力
+            spdlog::get("dump")->info(payload);
 
             // 1秒スリープ
             std::this_thread::sleep_for(std::chrono::seconds(1));
         }
-
-        spdlog::get("multi_sink")->flush();
+        // dumpファイルを出力
+        spdlog::get("dump")->flush();
         MqttBridge::cleanupSock();
     }
     catch (const std::exception &ex)
     {
-        std::cerr << "Error: " << ex.what() << "\n";
+        spdlog::error("Error " + std::string(ex.what()));
         return EXIT_FAILURE;
     }
 

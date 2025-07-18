@@ -252,6 +252,10 @@ func startUDPListener(ctx context.Context, wg *sync.WaitGroup, errCh chan<- erro
 			}
 			payload := string(buf[:n])
 			body := strings.SplitN(payload, "\n", 2)
+			if len(body) < 2 {
+				slog.Warn("udp listener invalid payload", slog.String("payload", payload))
+				continue
+			}
 			msg := UdpMessage{
 				Topic:   body[0],
 				Payload: body[1],

@@ -60,8 +60,8 @@ func initConfig() {
 	viper.SetDefault("HTTP.listen", "127.0.0.1:8080")
 	viper.SetDefault("HTTP.root", "dist")
 	viper.SetDefault("MQTT.tcp", "127.0.0.1:1883")
-	viper.SetDefault("MQTT.websocket", "127.0.0.1:6565")
-	viper.SetDefault("UDP.listen", "127.0.0.1:5656")
+	viper.SetDefault("MQTT.websocket", "127.0.0.1:9090")
+	viper.SetDefault("UDP.listen", "127.0.0.1:6565")
 	if cfgFile != "" {
 		// フラグで指定された設定ファイルを使用します。
 		viper.SetConfigFile(cfgFile)

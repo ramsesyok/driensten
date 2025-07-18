@@ -17,12 +17,20 @@ driensten は、HTTPサーバとMQTTブローカとUDP-MQTTブリッジの３つ
 実行ファイル直下の ```driensten.yaml```で設定をします。
 
 ```yaml
-HTTP: 
+HTTP:
     listen: 127.0.0.1:8080
     root: dist
+    tls:
+      enable: false
+      cert: server.crt
+      key: server.key
 MQTT:
   tcp: 127.0.0.1:1883
   websocket: 127.0.0.1:9090
+  tls:
+    enable: false
+    cert: server.crt
+    key: server.key
 UDP:
   listen: 127.0.0.1:6565
   forwards:

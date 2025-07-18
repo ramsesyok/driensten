@@ -100,7 +100,7 @@ func startWebServer(ctx context.Context, wg *sync.WaitGroup, errCh chan<- error)
 	// コンテキストキャンセルで停止
 	go func() {
 		<-ctx.Done()
-		slog.Info("echo web server receive shutdown requrest")
+		slog.Info("echo web server receive shutdown request")
 		if err := e.Shutdown(context.Background()); err != nil {
 			errCh <- err
 		}
@@ -195,7 +195,7 @@ func startMQTTBroker(ctx context.Context, wg *sync.WaitGroup, errCh chan<- error
 		for {
 			select {
 			case <-ctx.Done():
-				slog.Info("mochi mqtt receive shutdown requrest")
+				slog.Info("mochi mqtt receive shutdown request")
 				broker.Close()
 			case msg := <-msgCh:
 				slog.Debug("udp forwarder received message", slog.String("topic", msg.Topic), slog.String("payload", string(msg.Payload)))

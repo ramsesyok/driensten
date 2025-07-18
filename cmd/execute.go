@@ -90,8 +90,12 @@ func startWebServer(ctx context.Context, wg *sync.WaitGroup, errCh chan<- error)
 	defer wg.Done()
 	addr := viper.GetString("HTTP.listen")
 	fsRoot := viper.GetString("HTTP.root")
+	tlsEnable := viper.GetBool("HTTP.tls.enable")
+	tlsCert := viper.GetString("HTTP.tls.cert")
+	tlsKey := viper.GetString("HTTP.tls.key")
 	slog.Info("load configuration", slog.String("HTTP.listen", addr))
 	slog.Info("load configuration", slog.String("HTTP.root", fsRoot))
+	slog.Info("load configuration", slog.Bool("HTTP.tls.enable", tlsEnable))
 	e := echo.New()
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
@@ -107,7 +111,13 @@ func startWebServer(ctx context.Context, wg *sync.WaitGroup, errCh chan<- error)
 	}()
 
 	// ブロックしてサーバ実行
-	if err := e.Start(addr); err != nil && err != http.ErrServerClosed {
+	var err error
+	if tlsEnable {
+		err = e.StartTLS(addr, tlsCert, tlsKey)
+	} else {
+		err = e.Start(addr)
+	}
+	if err != nil && err != http.ErrServerClosed {
 		errCh <- err
 	}
 }
@@ -117,13 +127,22 @@ func startMQTTBroker(ctx context.Context, wg *sync.WaitGroup, errCh chan<- error
 	defer wg.Done()
 	tcpAddress := viper.GetString("MQTT.tcp")
 	webAddress := viper.GetString("MQTT.websocket")
+	tlsEnable := viper.GetBool("MQTT.tls.enable")
+	tlsCert := viper.GetString("MQTT.tls.cert")
+	tlsKey := viper.GetString("MQTT.tls.key")
 	slog.Info("load configuration", slog.String("MQTT.tcp", tcpAddress))
 	slog.Info("load configuration", slog.String("MQTT.websocket", webAddress))
+	slog.Info("load configuration", slog.Bool("MQTT.tls.enable", tlsEnable))
 
 	broker := mqtt.New(&mqtt.Options{InlineClient: true, Logger: slog.Default()})
 	_ = broker.AddHook(new(auth.AllowHook), nil)
 	// TCP待ち受け
-	tcp := listeners.NewTCP(listeners.Config{ID: "mqtt.tcp", Address: tcpAddress})
+	var tcp listeners.Listener
+	if tlsEnable {
+		tcp = listeners.NewTLSTCP(listeners.Config{ID: "mqtt.tcp", Address: tcpAddress, CertPath: tlsCert, KeyPath: tlsKey})
+	} else {
+		tcp = listeners.NewTCP(listeners.Config{ID: "mqtt.tcp", Address: tcpAddress})
+	}
 	if err := broker.AddListener(tcp); err != nil {
 		slog.Error("mqtt failed to listen for TCP connections.", slog.String("error", err.Error()))
 		errCh <- err
@@ -131,7 +150,12 @@ func startMQTTBroker(ctx context.Context, wg *sync.WaitGroup, errCh chan<- error
 	}
 
 	// WebSocket待ち受け
-	web := listeners.NewWebsocket(listeners.Config{ID: "mqtt.websocket", Address: webAddress})
+	var web listeners.Listener
+	if tlsEnable {
+		web = listeners.NewWebsocketTLS(listeners.Config{ID: "mqtt.websocket", Address: webAddress, CertPath: tlsCert, KeyPath: tlsKey})
+	} else {
+		web = listeners.NewWebsocket(listeners.Config{ID: "mqtt.websocket", Address: webAddress})
+	}
 	if err := broker.AddListener(web); err != nil {
 		slog.Error("mqtt failed to listen for WebSocket connections.", slog.String("error", err.Error()))
 		errCh <- err

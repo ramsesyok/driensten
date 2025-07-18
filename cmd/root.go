@@ -59,8 +59,14 @@ func init() {
 func initConfig() {
 	viper.SetDefault("HTTP.listen", "127.0.0.1:8080")
 	viper.SetDefault("HTTP.root", "dist")
+	viper.SetDefault("HTTP.tls.enable", false)
+	viper.SetDefault("HTTP.tls.cert", "")
+	viper.SetDefault("HTTP.tls.key", "")
 	viper.SetDefault("MQTT.tcp", "127.0.0.1:1883")
 	viper.SetDefault("MQTT.websocket", "127.0.0.1:9090")
+	viper.SetDefault("MQTT.tls.enable", false)
+	viper.SetDefault("MQTT.tls.cert", "")
+	viper.SetDefault("MQTT.tls.key", "")
 	viper.SetDefault("UDP.listen", "127.0.0.1:6565")
 	if cfgFile != "" {
 		// フラグで指定された設定ファイルを使用します。

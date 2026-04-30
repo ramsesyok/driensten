@@ -232,6 +232,7 @@ func startMQTTBroker(ctx context.Context, wg *sync.WaitGroup, errCh chan<- error
 			case <-ctx.Done():
 				slog.Info("mochi mqtt receive shutdown request")
 				broker.Close()
+				return
 			case msg := <-msgCh:
 				matched := false
 				for filter := range topics {

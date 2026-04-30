@@ -36,7 +36,6 @@ import (
 	"github.com/spf13/viper"
 
 	mqtt "github.com/mochi-mqtt/server/v2"
-	"github.com/mochi-mqtt/server/v2/hooks/auth"
 	"github.com/mochi-mqtt/server/v2/listeners"
 	"github.com/mochi-mqtt/server/v2/packets"
 )
@@ -67,6 +66,61 @@ func mqttTopicMatch(filter, topic string) bool {
 		ti++
 	}
 	return fi == len(filterParts) && ti == len(topicParts)
+}
+
+type mqttUser struct {
+	Username string `mapstructure:"username"`
+	Password string `mapstructure:"password"`
+}
+
+type mqttAuthConfig struct {
+	Mode  string     `mapstructure:"mode"`
+	Users []mqttUser `mapstructure:"users"`
+}
+
+type mqttAuthHook struct {
+	mqtt.HookBase
+	cfg mqttAuthConfig
+}
+
+func (h *mqttAuthHook) ID() string { return "driensten-auth" }
+
+func (h *mqttAuthHook) Provides(b byte) bool {
+	return bytes.Contains([]byte{
+		mqtt.OnConnectAuthenticate,
+		mqtt.OnACLCheck,
+	}, []byte{b})
+}
+
+func (h *mqttAuthHook) OnConnectAuthenticate(cl *mqtt.Client, pk packets.Packet) bool {
+	switch h.cfg.Mode {
+	case "password":
+		for _, u := range h.cfg.Users {
+			if u.Username == string(pk.Connect.Username) &&
+				u.Password == string(pk.Connect.Password) {
+				return true
+			}
+		}
+		slog.Warn("mqtt auth rejected", slog.String("username", string(pk.Connect.Username)))
+		return false
+	case "cert":
+		tlsConn, ok := cl.Net.Conn.(*tls.Conn)
+		if !ok {
+			slog.Warn("mqtt cert auth rejected: connection is not TLS")
+			return false
+		}
+		if len(tlsConn.ConnectionState().PeerCertificates) == 0 {
+			slog.Warn("mqtt cert auth rejected: no client certificate presented")
+			return false
+		}
+		return true
+	default: // "none"
+		return true
+	}
+}
+
+func (h *mqttAuthHook) OnACLCheck(cl *mqtt.Client, topic string, write bool) bool {
+	return true
 }
 
 func execute() {
@@ -158,8 +212,21 @@ func startMQTTBroker(ctx context.Context, wg *sync.WaitGroup, errCh chan<- error
 	slog.Info("load configuration", slog.String("MQTT.websocket", webAddress))
 	slog.Info("load configuration", slog.Bool("MQTT.tls.enable", tlsEnable))
 
+	var authCfg mqttAuthConfig
+	if err := viper.UnmarshalKey("MQTT.auth", &authCfg); err != nil {
+		slog.Warn("MQTT.auth config parse error, falling back to none", slog.String("error", err.Error()))
+		authCfg.Mode = "none"
+	}
+	if authCfg.Mode == "" {
+		authCfg.Mode = "none"
+	}
+	slog.Info("load configuration", slog.String("MQTT.auth.mode", authCfg.Mode))
+	if authCfg.Mode == "none" {
+		slog.Warn("MQTT authentication is DISABLED (MQTT.auth.mode=none) - do not use in production")
+	}
+
 	broker := mqtt.New(&mqtt.Options{InlineClient: true, Logger: slog.Default()})
-	_ = broker.AddHook(new(auth.AllowHook), nil)
+	_ = broker.AddHook(&mqttAuthHook{cfg: authCfg}, nil)
 	var tlsConfig *tls.Config
 	if tlsEnable {
 		cert, err := tls.LoadX509KeyPair(tlsCert, tlsKey)
@@ -230,12 +297,23 @@ func startMQTTBroker(ctx context.Context, wg *sync.WaitGroup, errCh chan<- error
 			slog.Warn("udp forwarder unknown topic", slog.String("topic", pk.TopicName))
 		}
 	}
-	for topic := range topics {
-		err := broker.Subscribe(topic, 1, callbackFn)
-		if err != nil {
-			slog.Warn("udp forwarder failed to subscribe", slog.String("error", err.Error()))
-		} else {
-			slog.Info("udp forwarder regist subscribe", slog.String("topic", topic))
+	allowUnauthForwards := viper.GetBool("UDP.allow_unauthenticated_forwards")
+	slog.Info("load configuration", slog.Bool("UDP.allow_unauthenticated_forwards", allowUnauthForwards))
+
+	forwardingEnabled := authCfg.Mode != "none" || allowUnauthForwards
+	if !forwardingEnabled {
+		slog.Warn("MQTT→UDP forwarding is DISABLED: set UDP.allow_unauthenticated_forwards=true to enable forwarding without authentication")
+	} else {
+		if authCfg.Mode == "none" && allowUnauthForwards {
+			slog.Warn("MQTT→UDP forwarding enabled without authentication (UDP.allow_unauthenticated_forwards=true) - unauthenticated clients can inject data into UDP streams")
+		}
+		for topic := range topics {
+			err := broker.Subscribe(topic, 1, callbackFn)
+			if err != nil {
+				slog.Warn("udp forwarder failed to subscribe", slog.String("error", err.Error()))
+			} else {
+				slog.Info("udp forwarder regist subscribe", slog.String("topic", topic))
+			}
 		}
 	}
 

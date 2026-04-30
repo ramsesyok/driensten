@@ -8,12 +8,25 @@ HTTP:
 MQTT:
   tcp: 127.0.0.1:1883
   websocket: 127.0.0.1:9090
+  auth:
+    mode: none  # none | password | cert
+    # password モード用ユーザ定義例:
+    # users:
+    #   - username: alice
+    #     password: secret
+    #   - username: bob
+    #     password: pass123
+    # cert モードは MQTT.tls.enable: true が必要
   tls:
     enable: false
     cert: server.crt
     key: server.key
 UDP:
   listen: 127.0.0.1:6565
+  # MQTT.auth.mode が none のとき、MQTT→UDP 転送を有効にするには true を指定する。
+  # true にすると認証なしクライアントが UDP ストリームにデータを注入できるため、
+  # 開発・PoC 環境以外では false のままにすること。
+  allow_unauthenticated_forwards: false
   forwards:
     127.0.0.1:5653:
       - realtime/command

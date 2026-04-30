@@ -18,6 +18,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"log/slog"
 	"net"
 	"os"
@@ -35,7 +36,6 @@ import (
 	"github.com/spf13/viper"
 
 	mqtt "github.com/mochi-mqtt/server/v2"
-	"github.com/mochi-mqtt/server/v2/hooks/auth"
 	"github.com/mochi-mqtt/server/v2/listeners"
 	"github.com/mochi-mqtt/server/v2/packets"
 )
@@ -43,6 +43,84 @@ import (
 type UdpMessage struct {
 	Topic   string
 	Payload string
+}
+
+// mqttTopicMatch は MQTT のトピックフィルタ（ワイルドカード + / # を含む）と
+// 具体的なトピック名が一致するか判定する。
+// MQTT 仕様に従い、+ は単一レベル、# は末尾で残り全レベルにマッチする。
+func mqttTopicMatch(filter, topic string) bool {
+	filterParts := strings.Split(filter, "/")
+	topicParts := strings.Split(topic, "/")
+	fi, ti := 0, 0
+	for fi < len(filterParts) {
+		if filterParts[fi] == "#" {
+			return true
+		}
+		if ti >= len(topicParts) {
+			return false
+		}
+		if filterParts[fi] != "+" && filterParts[fi] != topicParts[ti] {
+			return false
+		}
+		fi++
+		ti++
+	}
+	return fi == len(filterParts) && ti == len(topicParts)
+}
+
+type mqttUser struct {
+	Username string `mapstructure:"username"`
+	Password string `mapstructure:"password"`
+}
+
+type mqttAuthConfig struct {
+	Mode  string     `mapstructure:"mode"`
+	Users []mqttUser `mapstructure:"users"`
+}
+
+type mqttAuthHook struct {
+	mqtt.HookBase
+	cfg mqttAuthConfig
+}
+
+func (h *mqttAuthHook) ID() string { return "driensten-auth" }
+
+func (h *mqttAuthHook) Provides(b byte) bool {
+	return bytes.Contains([]byte{
+		mqtt.OnConnectAuthenticate,
+		mqtt.OnACLCheck,
+	}, []byte{b})
+}
+
+func (h *mqttAuthHook) OnConnectAuthenticate(cl *mqtt.Client, pk packets.Packet) bool {
+	switch h.cfg.Mode {
+	case "password":
+		for _, u := range h.cfg.Users {
+			if u.Username == string(pk.Connect.Username) &&
+				u.Password == string(pk.Connect.Password) {
+				return true
+			}
+		}
+		slog.Warn("mqtt auth rejected", slog.String("username", string(pk.Connect.Username)))
+		return false
+	case "cert":
+		tlsConn, ok := cl.Net.Conn.(*tls.Conn)
+		if !ok {
+			slog.Warn("mqtt cert auth rejected: connection is not TLS")
+			return false
+		}
+		if len(tlsConn.ConnectionState().PeerCertificates) == 0 {
+			slog.Warn("mqtt cert auth rejected: no client certificate presented")
+			return false
+		}
+		return true
+	default: // "none"
+		return true
+	}
+}
+
+func (h *mqttAuthHook) OnACLCheck(cl *mqtt.Client, topic string, write bool) bool {
+	return true
 }
 
 func execute() {
@@ -134,15 +212,34 @@ func startMQTTBroker(ctx context.Context, wg *sync.WaitGroup, errCh chan<- error
 	slog.Info("load configuration", slog.String("MQTT.websocket", webAddress))
 	slog.Info("load configuration", slog.Bool("MQTT.tls.enable", tlsEnable))
 
-	broker := mqtt.New(&mqtt.Options{InlineClient: true, Logger: slog.Default()})
-	_ = broker.AddHook(new(auth.AllowHook), nil)
-	// TCP待ち受け
-	var tcp listeners.Listener
-	if tlsEnable {
-		tcp = listeners.NewTLSTCP(listeners.Config{ID: "mqtt.tcp", Address: tcpAddress, CertPath: tlsCert, KeyPath: tlsKey})
-	} else {
-		tcp = listeners.NewTCP(listeners.Config{ID: "mqtt.tcp", Address: tcpAddress})
+	var authCfg mqttAuthConfig
+	if err := viper.UnmarshalKey("MQTT.auth", &authCfg); err != nil {
+		slog.Warn("MQTT.auth config parse error, falling back to none", slog.String("error", err.Error()))
+		authCfg.Mode = "none"
 	}
+	if authCfg.Mode == "" {
+		authCfg.Mode = "none"
+	}
+	slog.Info("load configuration", slog.String("MQTT.auth.mode", authCfg.Mode))
+	if authCfg.Mode == "none" {
+		slog.Warn("MQTT authentication is DISABLED (MQTT.auth.mode=none) - do not use in production")
+	}
+
+	broker := mqtt.New(&mqtt.Options{InlineClient: true, Logger: slog.Default()})
+	_ = broker.AddHook(&mqttAuthHook{cfg: authCfg}, nil)
+	var tlsConfig *tls.Config
+	if tlsEnable {
+		cert, err := tls.LoadX509KeyPair(tlsCert, tlsKey)
+		if err != nil {
+			slog.Error("mqtt failed to load TLS certificate", slog.String("error", err.Error()))
+			errCh <- err
+			return
+		}
+		tlsConfig = &tls.Config{Certificates: []tls.Certificate{cert}}
+	}
+
+	// TCP待ち受け
+	tcp := listeners.NewTCP(listeners.Config{ID: "mqtt.tcp", Address: tcpAddress, TLSConfig: tlsConfig})
 	if err := broker.AddListener(tcp); err != nil {
 		slog.Error("mqtt failed to listen for TCP connections.", slog.String("error", err.Error()))
 		errCh <- err
@@ -150,12 +247,7 @@ func startMQTTBroker(ctx context.Context, wg *sync.WaitGroup, errCh chan<- error
 	}
 
 	// WebSocket待ち受け
-	var web listeners.Listener
-	if tlsEnable {
-		web = listeners.NewWebsocketTLS(listeners.Config{ID: "mqtt.websocket", Address: webAddress, CertPath: tlsCert, KeyPath: tlsKey})
-	} else {
-		web = listeners.NewWebsocket(listeners.Config{ID: "mqtt.websocket", Address: webAddress})
-	}
+	web := listeners.NewWebsocket(listeners.Config{ID: "mqtt.websocket", Address: webAddress, TLSConfig: tlsConfig})
 	if err := broker.AddListener(web); err != nil {
 		slog.Error("mqtt failed to listen for WebSocket connections.", slog.String("error", err.Error()))
 		errCh <- err
@@ -205,12 +297,23 @@ func startMQTTBroker(ctx context.Context, wg *sync.WaitGroup, errCh chan<- error
 			slog.Warn("udp forwarder unknown topic", slog.String("topic", pk.TopicName))
 		}
 	}
-	for topic := range topics {
-		err := broker.Subscribe(topic, 1, callbackFn)
-		if err != nil {
-			slog.Warn("udp forwarder failed to subscribe", slog.String("error", err.Error()))
-		} else {
-			slog.Info("udp forwarder regist subscribe", slog.String("topic", topic))
+	allowUnauthForwards := viper.GetBool("UDP.allow_unauthenticated_forwards")
+	slog.Info("load configuration", slog.Bool("UDP.allow_unauthenticated_forwards", allowUnauthForwards))
+
+	forwardingEnabled := authCfg.Mode != "none" || allowUnauthForwards
+	if !forwardingEnabled {
+		slog.Warn("MQTT→UDP forwarding is DISABLED: set UDP.allow_unauthenticated_forwards=true to enable forwarding without authentication")
+	} else {
+		if authCfg.Mode == "none" && allowUnauthForwards {
+			slog.Warn("MQTT→UDP forwarding enabled without authentication (UDP.allow_unauthenticated_forwards=true) - unauthenticated clients can inject data into UDP streams")
+		}
+		for topic := range topics {
+			err := broker.Subscribe(topic, 1, callbackFn)
+			if err != nil {
+				slog.Warn("udp forwarder failed to subscribe", slog.String("error", err.Error()))
+			} else {
+				slog.Info("udp forwarder regist subscribe", slog.String("topic", topic))
+			}
 		}
 	}
 
@@ -222,6 +325,17 @@ func startMQTTBroker(ctx context.Context, wg *sync.WaitGroup, errCh chan<- error
 				slog.Info("mochi mqtt receive shutdown request")
 				broker.Close()
 			case msg := <-msgCh:
+				matched := false
+				for filter := range topics {
+					if mqttTopicMatch(filter, msg.Topic) {
+						matched = true
+						break
+					}
+				}
+				if !matched {
+					slog.Warn("udp listener topic not allowed", slog.String("topic", msg.Topic))
+					continue
+				}
 				slog.Debug("udp forwarder received message", slog.String("topic", msg.Topic), slog.String("payload", string(msg.Payload)))
 				broker.Publish(msg.Topic, []byte(msg.Payload), false, 1)
 			}
@@ -276,7 +390,7 @@ func startUDPListener(ctx context.Context, wg *sync.WaitGroup, errCh chan<- erro
 			}
 			payload := string(buf[:n])
 			body := strings.SplitN(payload, "\n", 2)
-			if len(body) < 2 {
+			if len(body) < 2 || body[0] == "" {
 				slog.Warn("udp listener invalid payload", slog.String("payload", payload))
 				continue
 			}

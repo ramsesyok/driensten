@@ -18,6 +18,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"log/slog"
 	"net"
 	"os"
@@ -43,6 +44,29 @@ import (
 type UdpMessage struct {
 	Topic   string
 	Payload string
+}
+
+// mqttTopicMatch は MQTT のトピックフィルタ（ワイルドカード + / # を含む）と
+// 具体的なトピック名が一致するか判定する。
+// MQTT 仕様に従い、+ は単一レベル、# は末尾で残り全レベルにマッチする。
+func mqttTopicMatch(filter, topic string) bool {
+	filterParts := strings.Split(filter, "/")
+	topicParts := strings.Split(topic, "/")
+	fi, ti := 0, 0
+	for fi < len(filterParts) {
+		if filterParts[fi] == "#" {
+			return true
+		}
+		if ti >= len(topicParts) {
+			return false
+		}
+		if filterParts[fi] != "+" && filterParts[fi] != topicParts[ti] {
+			return false
+		}
+		fi++
+		ti++
+	}
+	return fi == len(filterParts) && ti == len(topicParts)
 }
 
 func execute() {
@@ -136,13 +160,19 @@ func startMQTTBroker(ctx context.Context, wg *sync.WaitGroup, errCh chan<- error
 
 	broker := mqtt.New(&mqtt.Options{InlineClient: true, Logger: slog.Default()})
 	_ = broker.AddHook(new(auth.AllowHook), nil)
-	// TCP待ち受け
-	var tcp listeners.Listener
+	var tlsConfig *tls.Config
 	if tlsEnable {
-		tcp = listeners.NewTLSTCP(listeners.Config{ID: "mqtt.tcp", Address: tcpAddress, CertPath: tlsCert, KeyPath: tlsKey})
-	} else {
-		tcp = listeners.NewTCP(listeners.Config{ID: "mqtt.tcp", Address: tcpAddress})
+		cert, err := tls.LoadX509KeyPair(tlsCert, tlsKey)
+		if err != nil {
+			slog.Error("mqtt failed to load TLS certificate", slog.String("error", err.Error()))
+			errCh <- err
+			return
+		}
+		tlsConfig = &tls.Config{Certificates: []tls.Certificate{cert}}
 	}
+
+	// TCP待ち受け
+	tcp := listeners.NewTCP(listeners.Config{ID: "mqtt.tcp", Address: tcpAddress, TLSConfig: tlsConfig})
 	if err := broker.AddListener(tcp); err != nil {
 		slog.Error("mqtt failed to listen for TCP connections.", slog.String("error", err.Error()))
 		errCh <- err
@@ -150,12 +180,7 @@ func startMQTTBroker(ctx context.Context, wg *sync.WaitGroup, errCh chan<- error
 	}
 
 	// WebSocket待ち受け
-	var web listeners.Listener
-	if tlsEnable {
-		web = listeners.NewWebsocketTLS(listeners.Config{ID: "mqtt.websocket", Address: webAddress, CertPath: tlsCert, KeyPath: tlsKey})
-	} else {
-		web = listeners.NewWebsocket(listeners.Config{ID: "mqtt.websocket", Address: webAddress})
-	}
+	web := listeners.NewWebsocket(listeners.Config{ID: "mqtt.websocket", Address: webAddress, TLSConfig: tlsConfig})
 	if err := broker.AddListener(web); err != nil {
 		slog.Error("mqtt failed to listen for WebSocket connections.", slog.String("error", err.Error()))
 		errCh <- err
@@ -222,6 +247,17 @@ func startMQTTBroker(ctx context.Context, wg *sync.WaitGroup, errCh chan<- error
 				slog.Info("mochi mqtt receive shutdown request")
 				broker.Close()
 			case msg := <-msgCh:
+				matched := false
+				for filter := range topics {
+					if mqttTopicMatch(filter, msg.Topic) {
+						matched = true
+						break
+					}
+				}
+				if !matched {
+					slog.Warn("udp listener topic not allowed", slog.String("topic", msg.Topic))
+					continue
+				}
 				slog.Debug("udp forwarder received message", slog.String("topic", msg.Topic), slog.String("payload", string(msg.Payload)))
 				broker.Publish(msg.Topic, []byte(msg.Payload), false, 1)
 			}
@@ -276,7 +312,7 @@ func startUDPListener(ctx context.Context, wg *sync.WaitGroup, errCh chan<- erro
 			}
 			payload := string(buf[:n])
 			body := strings.SplitN(payload, "\n", 2)
-			if len(body) < 2 {
+			if len(body) < 2 || body[0] == "" {
 				slog.Warn("udp listener invalid payload", slog.String("payload", payload))
 				continue
 			}

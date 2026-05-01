@@ -53,7 +53,11 @@ func init() {
 }
 
 // initConfig は、設定ファイルを読み込み、設定されていれば環境変数も読み込みます。
+// gencert サブコマンドは設定ファイルを使用しないためスキップする。
 func initConfig() {
+	if len(os.Args) > 1 && os.Args[1] == "gencert" {
+		return
+	}
 	viper.SetDefault("HTTP.listen", "127.0.0.1:8080")
 	viper.SetDefault("HTTP.root", "dist")
 	viper.SetDefault("HTTP.tls.enable", false)

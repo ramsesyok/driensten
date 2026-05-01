@@ -82,6 +82,82 @@ func generateSelfSignedCert(t *testing.T, hosts []string) (certPEM, keyPEM []byt
 	return
 }
 
+// generateTestCA は自己署名のテスト用 root CA を生成する。
+// 戻り値の証明書 + 秘密鍵で leaf 証明書に署名する。
+func generateTestCA(t *testing.T) (*x509.Certificate, *ecdsa.PrivateKey) {
+	t.Helper()
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(time.Now().UnixNano()),
+		Subject:               pkix.Name{CommonName: "driensten-test-ca"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		IsCA:                  true,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+		BasicConstraintsValid: true,
+	}
+
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &priv.PublicKey, priv)
+	require.NoError(t, err)
+
+	parsed, err := x509.ParseCertificate(der)
+	require.NoError(t, err)
+	return parsed, priv
+}
+
+// signLeafCert は ca + caKey で leaf 証明書に署名する。
+// hosts が指定されていれば SAN として登録 (server cert 用)。
+// isClient=true なら ExtKeyUsage を ClientAuth、false なら ServerAuth とする。
+func signLeafCert(t *testing.T, ca *x509.Certificate, caKey *ecdsa.PrivateKey, hosts []string, isClient bool) (*x509.Certificate, *ecdsa.PrivateKey) {
+	t.Helper()
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	eku := x509.ExtKeyUsageServerAuth
+	cn := "driensten-test-server"
+	if isClient {
+		eku = x509.ExtKeyUsageClientAuth
+		cn = "driensten-test-client"
+	}
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(time.Now().UnixNano()),
+		Subject:      pkix.Name{CommonName: cn},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  []x509.ExtKeyUsage{eku},
+	}
+	for _, h := range hosts {
+		if ip := net.ParseIP(h); ip != nil {
+			template.IPAddresses = append(template.IPAddresses, ip)
+		} else {
+			template.DNSNames = append(template.DNSNames, h)
+		}
+	}
+
+	der, err := x509.CreateCertificate(rand.Reader, template, ca, &priv.PublicKey, caKey)
+	require.NoError(t, err)
+
+	parsed, err := x509.ParseCertificate(der)
+	require.NoError(t, err)
+	return parsed, priv
+}
+
+// certPEM は X.509 証明書を PEM エンコードする。
+func certPEM(cert *x509.Certificate) []byte {
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
+}
+
+// keyPEM は ECDSA 秘密鍵を PEM エンコードする。
+func keyPEM(t *testing.T, key *ecdsa.PrivateKey) []byte {
+	t.Helper()
+	der, err := x509.MarshalECPrivateKey(key)
+	require.NoError(t, err)
+	return pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der})
+}
+
 // writeCertFiles は cert/key の PEM をテンポラリディレクトリに書き出してパスを返す。
 func writeCertFiles(t *testing.T, certPEM, keyPEM []byte) (certPath, keyPath string) {
 	t.Helper()

@@ -19,8 +19,12 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net"
+	"os"
 	"strings"
 	"sync"
 
@@ -93,6 +97,35 @@ func buildTopicToAddressMap(forwards map[string][]string) map[string]string {
 	return topics
 }
 
+// validateMQTTAuthConfig は MQTT 認証設定の整合性を確認する。
+// cert モードは TLS 有効化と client_ca 指定が必須。それ以外のモードは無条件で OK。
+func validateMQTTAuthConfig(mode string, tlsEnable bool, clientCAPath string) error {
+	if mode != "cert" {
+		return nil
+	}
+	if !tlsEnable {
+		return errors.New("MQTT.auth.mode=cert requires MQTT.tls.enable=true")
+	}
+	if clientCAPath == "" {
+		return errors.New("MQTT.auth.mode=cert requires MQTT.tls.client_ca to be set")
+	}
+	return nil
+}
+
+// loadClientCAPool は指定された PEM ファイルを読み込み、x509.CertPool を返す。
+// ファイルに有効な証明書が 1 つも含まれない場合はエラー。
+func loadClientCAPool(path string) (*x509.CertPool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read client CA file: %w", err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(data) {
+		return nil, fmt.Errorf("no valid certificates found in %s", path)
+	}
+	return pool, nil
+}
+
 type mqttAuthHook struct {
 	mqtt.HookBase
 	cfg mqttAuthConfig
@@ -156,6 +189,14 @@ func startMQTTBroker(ctx context.Context, wg *sync.WaitGroup, errCh chan<- error
 		authCfg.Mode = "none"
 	}
 	slog.Info("load configuration", slog.String("MQTT.auth.mode", authCfg.Mode))
+
+	clientCAPath := viper.GetString("MQTT.tls.client_ca")
+	if err := validateMQTTAuthConfig(authCfg.Mode, tlsEnable, clientCAPath); err != nil {
+		slog.Error("mqtt auth misconfigured", slog.String("error", err.Error()))
+		errCh <- err
+		return
+	}
+
 	if authCfg.Mode == "none" {
 		slog.Warn("MQTT authentication is DISABLED (MQTT.auth.mode=none) - do not use in production")
 	}
@@ -171,6 +212,20 @@ func startMQTTBroker(ctx context.Context, wg *sync.WaitGroup, errCh chan<- error
 			return
 		}
 		tlsConfig = &tls.Config{Certificates: []tls.Certificate{cert}}
+
+		// cert 認証モードでは TLS 層でクライアント証明書を要求・検証する。
+		// 検証に通った接続のみ OnConnectAuthenticate (PeerCertificates チェック) に到達する。
+		if authCfg.Mode == "cert" {
+			pool, err := loadClientCAPool(clientCAPath)
+			if err != nil {
+				slog.Error("mqtt failed to load client CA", slog.String("error", err.Error()))
+				errCh <- err
+				return
+			}
+			tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
+			tlsConfig.ClientCAs = pool
+			slog.Info("load configuration", slog.String("MQTT.tls.client_ca", clientCAPath))
+		}
 	}
 
 	// TCP待ち受け

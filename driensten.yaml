@@ -16,11 +16,14 @@ MQTT:
     #     password: secret
     #   - username: bob
     #     password: pass123
-    # cert モードは MQTT.tls.enable: true が必要
+    # cert モードは MQTT.tls.enable: true と MQTT.tls.client_ca の指定が必要
   tls:
     enable: false
     cert: server.crt
     key: server.key
+    # cert 認証モード時に信頼するクライアント証明書 CA (PEM)。
+    # 1 ファイルに複数 CA を連結指定可。cert モード以外では無視される。
+    # client_ca: client-ca.pem
 UDP:
   listen: 127.0.0.1:6565
   # MQTT.auth.mode が none のとき、MQTT→UDP 転送を有効にするには true を指定する。

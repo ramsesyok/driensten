@@ -32,23 +32,41 @@ type UdpMessage struct {
 	Payload string
 }
 
+// parseUdpMessage は "<topic>\n<payload>" 形式の UDP ペイロードを分解する。
+// トピックが空、または改行が無い場合は ok=false を返す。
+func parseUdpMessage(buf []byte) (UdpMessage, bool) {
+	body := strings.SplitN(string(buf), "\n", 2)
+	if len(body) < 2 || body[0] == "" {
+		return UdpMessage{}, false
+	}
+	return UdpMessage{Topic: body[0], Payload: body[1]}, true
+}
+
+// resolveUdpListenAddr は "host:port" 形式の文字列から *net.UDPAddr を生成する。
+// host が IP リテラルでない場合 IP は nil となり、ListenUDP では全インタフェースで待ち受けとなる。
+func resolveUdpListenAddr(addr string) (*net.UDPAddr, error) {
+	host, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return nil, err
+	}
+	return &net.UDPAddr{IP: net.ParseIP(host), Port: port}, nil
+}
+
 // UDPリスナーを起動し、エラー発生時に errCh へ通知、コンテキストキャンセルで停止
 func startUDPListener(ctx context.Context, wg *sync.WaitGroup, errCh chan<- error, msgCh chan<- UdpMessage) {
 	defer wg.Done()
 	updListen := viper.GetString("UDP.listen")
 	slog.Info("load configuration", slog.String("UDP.listen", updListen))
-	udpAddr, udpPort, err := net.SplitHostPort(updListen)
+	addr, err := resolveUdpListenAddr(updListen)
 	if err != nil {
 		errCh <- err
 		return
 	}
-	port, err := strconv.Atoi(udpPort)
-	if err != nil {
-		errCh <- err
-		return
-	}
-	addr := net.UDPAddr{IP: net.ParseIP(udpAddr), Port: port}
-	conn, err := net.ListenUDP("udp", &addr)
+	conn, err := net.ListenUDP("udp", addr)
 	if err != nil {
 		errCh <- err
 		return
@@ -72,15 +90,10 @@ func startUDPListener(ctx context.Context, wg *sync.WaitGroup, errCh chan<- erro
 				errCh <- err
 				return
 			}
-			payload := string(buf[:n])
-			body := strings.SplitN(payload, "\n", 2)
-			if len(body) < 2 || body[0] == "" {
-				slog.Warn("udp listener invalid payload", slog.String("payload", payload))
+			msg, ok := parseUdpMessage(buf[:n])
+			if !ok {
+				slog.Warn("udp listener invalid payload", slog.String("payload", string(buf[:n])))
 				continue
-			}
-			msg := UdpMessage{
-				Topic:   body[0],
-				Payload: body[1],
 			}
 			msgCh <- msg
 		}

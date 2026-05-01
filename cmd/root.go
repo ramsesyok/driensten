@@ -34,9 +34,6 @@ var rootCmd = &cobra.Command{
 	Long: `本サービスは、HTTPサーバとMQTTブローカー機能を提供します。
 MQTTは、UDP通信を中継することができ、指定ポートにUDPでメッセージを送付すると、MQTTによってPublishされます。
 一方、設定ファイルで指定したトピック情報は、UDPとして送信されます。`,
-	Run: func(cmd *cobra.Command, args []string) {
-		execute()
-	},
 }
 
 // Execute はすべての子コマンドを root コマンドに追加し、フラグを適切に設定します。

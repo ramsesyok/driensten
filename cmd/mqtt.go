@@ -63,6 +63,36 @@ type mqttAuthConfig struct {
 	Users []mqttUser `mapstructure:"users"`
 }
 
+// matchPasswordCredential は users に同一の username/password 組が存在するか判定する。
+// 完全一致のみ true を返す。空ユーザリストや不一致では false。
+func matchPasswordCredential(users []mqttUser, username, password string) bool {
+	for _, u := range users {
+		if u.Username == username && u.Password == password {
+			return true
+		}
+	}
+	return false
+}
+
+// encodeUdpMessage は MQTT トピック名と payload を "<topic>\n<payload>" の UDP 転送フォーマットに整形する。
+// parseUdpMessage と対称な関係にあるが、topic に "\n" が含まれる場合は parseUdpMessage で復元できない点に注意。
+func encodeUdpMessage(topic string, payload []byte) []byte {
+	return bytes.Join([][]byte{[]byte(topic), payload}, []byte("\n"))
+}
+
+// buildTopicToAddressMap は "アドレス → トピックリスト" の forwards 設定を
+// "トピック → アドレス" の逆引きマップに変換する。
+// 同一トピックが複数アドレスに登録されている場合、後勝ちで上書きされる。
+func buildTopicToAddressMap(forwards map[string][]string) map[string]string {
+	topics := map[string]string{}
+	for addr, tpcs := range forwards {
+		for _, topic := range tpcs {
+			topics[topic] = addr
+		}
+	}
+	return topics
+}
+
 type mqttAuthHook struct {
 	mqtt.HookBase
 	cfg mqttAuthConfig
@@ -80,11 +110,8 @@ func (h *mqttAuthHook) Provides(b byte) bool {
 func (h *mqttAuthHook) OnConnectAuthenticate(cl *mqtt.Client, pk packets.Packet) bool {
 	switch h.cfg.Mode {
 	case "password":
-		for _, u := range h.cfg.Users {
-			if u.Username == string(pk.Connect.Username) &&
-				u.Password == string(pk.Connect.Password) {
-				return true
-			}
+		if matchPasswordCredential(h.cfg.Users, string(pk.Connect.Username), string(pk.Connect.Password)) {
+			return true
 		}
 		slog.Warn("mqtt auth rejected", slog.String("username", string(pk.Connect.Username)))
 		return false
@@ -164,13 +191,10 @@ func startMQTTBroker(ctx context.Context, wg *sync.WaitGroup, errCh chan<- error
 
 	// 転送用UDPの設定を取得
 	forwards := viper.GetStringMapStringSlice("UDP.forwards")
-	topics := map[string]string{}
 	for addr, tpcs := range forwards {
 		slog.Info("load configuration", slog.String("UDP.forwards.topic", addr), slog.String("UDP.forwards.address", strings.Join(tpcs, ",")))
-		for _, topic := range tpcs {
-			topics[topic] = addr
-		}
 	}
+	topics := buildTopicToAddressMap(forwards)
 	hasTopic := len(forwards) > 0 // トピック設定があるかの判定用
 
 	callbackFn := func(cl *mqtt.Client, sub packets.Subscription, pk packets.Packet) {
@@ -188,11 +212,7 @@ func startMQTTBroker(ctx context.Context, wg *sync.WaitGroup, errCh chan<- error
 			if udpAddr, err := net.ResolveUDPAddr("udp", writeTo); err != nil {
 				slog.Error("udp forwarder failed to resolve addres", slog.String("error", err.Error()), slog.String("writeTo", writeTo))
 			} else {
-				// 送信用メッセージを作成
-				messages := [][]byte{}
-				messages = append(messages, []byte(pk.TopicName))
-				messages = append(messages, pk.Payload)
-				body := bytes.Join(messages, []byte("\n"))
+				body := encodeUdpMessage(pk.TopicName, pk.Payload)
 
 				// アドレスに以上がなければ、送信時のエラーチェックしない
 				if n, err := conn.WriteToUDP(body, udpAddr); err != nil {

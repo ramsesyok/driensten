@@ -16,7 +16,17 @@ limitations under the License.
 package cmd
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -219,5 +229,110 @@ func TestBuildTopicToAddressMap(t *testing.T) {
 			"127.0.0.1:6000": {},
 		})
 		assert.Empty(t, got)
+	})
+}
+
+func TestValidateMQTTAuthConfig(t *testing.T) {
+	tests := []struct {
+		name      string
+		mode      string
+		tlsEnable bool
+		caPath    string
+		wantErr   bool
+		errSubstr string
+	}{
+		{name: "none mode passes regardless", mode: "none", wantErr: false},
+		{name: "password mode passes regardless", mode: "password", wantErr: false},
+		{name: "empty mode passes (treated as none upstream)", mode: "", wantErr: false},
+		{name: "unknown mode passes (only cert is validated)", mode: "future", wantErr: false},
+
+		{name: "cert mode without TLS errors", mode: "cert", tlsEnable: false, caPath: "/some/ca.pem", wantErr: true, errSubstr: "MQTT.tls.enable"},
+		{name: "cert mode without client_ca errors", mode: "cert", tlsEnable: true, caPath: "", wantErr: true, errSubstr: "MQTT.tls.client_ca"},
+		{name: "cert mode without TLS or CA errors on TLS first", mode: "cert", tlsEnable: false, caPath: "", wantErr: true, errSubstr: "MQTT.tls.enable"},
+		{name: "cert mode with TLS and CA passes", mode: "cert", tlsEnable: true, caPath: "/some/ca.pem", wantErr: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateMQTTAuthConfig(tt.mode, tt.tlsEnable, tt.caPath)
+			if tt.wantErr {
+				require.Error(t, err)
+				if tt.errSubstr != "" {
+					assert.Contains(t, err.Error(), tt.errSubstr)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+// generateCertPEMForTest は単一の自己署名 X.509 証明書 PEM を返す。
+// loadClientCAPool テスト用。integration ビルドタグで使う TLS ヘルパに頼らないため
+// ここで直接生成する。
+func generateCertPEMForTest(t *testing.T) []byte {
+	t.Helper()
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "unit-test-ca"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		KeyUsage:              x509.KeyUsageCertSign,
+		BasicConstraintsValid: true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &priv.PublicKey, priv)
+	require.NoError(t, err)
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+}
+
+func TestLoadClientCAPool(t *testing.T) {
+	t.Run("nonexistent file returns error", func(t *testing.T) {
+		_, err := loadClientCAPool(filepath.Join(t.TempDir(), "does-not-exist.pem"))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "read client CA file")
+	})
+
+	t.Run("empty file returns error", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "empty.pem")
+		require.NoError(t, os.WriteFile(path, []byte{}, 0o600))
+		_, err := loadClientCAPool(path)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no valid certificates")
+	})
+
+	t.Run("garbage content returns error", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "garbage.pem")
+		require.NoError(t, os.WriteFile(path, []byte("this is not a PEM"), 0o600))
+		_, err := loadClientCAPool(path)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no valid certificates")
+	})
+
+	t.Run("valid CA PEM returns non-empty pool", func(t *testing.T) {
+		pemBytes := generateCertPEMForTest(t)
+		path := filepath.Join(t.TempDir(), "ca.pem")
+		require.NoError(t, os.WriteFile(path, pemBytes, 0o600))
+
+		pool, err := loadClientCAPool(path)
+		require.NoError(t, err)
+		require.NotNil(t, pool)
+		// CertPool に内容が入っているか確認 (Equal で空 pool との非一致を見る)
+		assert.False(t, pool.Equal(x509.NewCertPool()), "pool should not be empty")
+	})
+
+	t.Run("multiple CAs concatenated PEM are all loaded", func(t *testing.T) {
+		pem1 := generateCertPEMForTest(t)
+		pem2 := generateCertPEMForTest(t)
+		combined := append(append([]byte{}, pem1...), pem2...)
+		path := filepath.Join(t.TempDir(), "multi-ca.pem")
+		require.NoError(t, os.WriteFile(path, combined, 0o600))
+
+		pool, err := loadClientCAPool(path)
+		require.NoError(t, err)
+		require.NotNil(t, pool)
 	})
 }

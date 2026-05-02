@@ -35,3 +35,6 @@ build
 out
 CMakePresets.json
 log.ndjson
+*.crt
+*.key
+*.pem
